@@ -24,6 +24,11 @@ import {
   demoDataSucceeded,
 } from 'src/shared/copy/notifications'
 
+// Utils
+import {reportError} from 'src/shared/utils/errors'
+import {getErrorMessage} from 'src/utils/api'
+import {fireGAEvent} from 'src/shared/utils/analytics'
+
 // Types
 import {
   Bucket,
@@ -33,8 +38,6 @@ import {
   ResourceType,
   Dashboard,
 } from 'src/types'
-import {reportError} from 'src/shared/utils/errors'
-import {getErrorMessage} from 'src/utils/api'
 
 export type Actions =
   | ReturnType<typeof setDemoDataStatus>
@@ -132,6 +135,8 @@ export const getDemoDataBucketMembership = ({
     const url = `/orgs/${orgID}/dashboards/${createdDashboard.id}`
 
     dispatch(notify(demoDataSucceeded(bucketName, url)))
+
+    fireGAEvent('demoData_bucketAdded', {demo_dataset: bucketName})
   } catch (error) {
     const message = `Could not create dashboard for demodata bucket ${bucketName}: ${getErrorMessage(
       error
