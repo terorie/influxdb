@@ -186,14 +186,14 @@ func (s *Service) UpdateLabel(ctx context.Context, id influxdb.ID, upd influxdb.
 
 // DeleteLabel deletes a label.
 func (s *Service) DeleteLabel(ctx context.Context, id influxdb.ID) error {
-	// err := s.kv.Update(ctx, func(tx Tx) error {
-	// 	return s.deleteLabel(ctx, tx, id)
-	// })
-	// if err != nil {
-	// 	return &influxdb.Error{
-	// 		Err: err,
-	// 	}
-	// }
+	err := s.store.Update(ctx, func(tx kv.Tx) error {
+		return s.store.DeleteLabel(ctx, tx, id)
+	})
+	if err != nil {
+		return &influxdb.Error{
+			Err: err,
+		}
+	}
 	return nil
 }
 
@@ -201,11 +201,30 @@ func (s *Service) DeleteLabel(ctx context.Context, id influxdb.ID) error {
 
 // CreateLabelMapping creates a new mapping between a resource and a label.
 func (s *Service) CreateLabelMapping(ctx context.Context, m *influxdb.LabelMapping) error {
-	// return s.kv.Update(ctx, func(tx kv.Tx) error {
-	// 	return s.createLabelMapping(ctx, tx, m)
-	// })
+	err := s.store.View(ctx, func(tx kv.Tx) error {
+		if _, err := s.store.GetLabel(ctx, tx, m.LabelID); err != nil {
+			return err
+		}
+		ls := []*influxdb.Label{}
+		err := s.store.FindResourceLabels(ctx, tx, influxdb.LabelMappingFilter{ResourceID: m.ResourceID, ResourceType: m.ResourceType}, &ls)
+		if err != nil {
+			return err
+		}
+		for i := 0; i < len(ls); i++ {
+			if ls[i].ID == m.LabelID {
+				return influxdb.ErrLabelExistsOnResource
+			}
+		}
 
-	return nil
+		return nil
+	})
+	if err != nil {
+		return err // todo (al) not found error
+	}
+
+	return s.store.Update(ctx, func(tx kv.Tx) error {
+		return s.store.CreateLabelMapping(ctx, tx, m)
+	})
 }
 
 // DeleteLabelMapping deletes a label mapping.

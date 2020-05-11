@@ -56,26 +56,26 @@ func LabelService(
 			name: "CreateLabel",
 			fn:   CreateLabel,
 		},
-		// {
-		// 	name: "CreateLabelMapping",
-		// 	fn:   CreateLabelMapping,
-		// },
-		// {
-		// 	name: "FindLabels",
-		// 	fn:   FindLabels,
-		// },
-		// {
-		// 	name: "FindLabelByID",
-		// 	fn:   FindLabelByID,
-		// },
+		{
+			name: "CreateLabelMapping",
+			fn:   CreateLabelMapping,
+		},
+		{
+			name: "FindLabels",
+			fn:   FindLabels,
+		},
+		{
+			name: "FindLabelByID",
+			fn:   FindLabelByID,
+		},
 		{
 			name: "UpdateLabel",
 			fn:   UpdateLabel,
 		},
-		// {
-		// 	name: "DeleteLabel",
-		// 	fn:   DeleteLabel,
-		// },
+		{
+			name: "DeleteLabel",
+			fn:   DeleteLabel,
+		},
 		// {
 		// 	name: "DeleteLabelMapping",
 		// 	fn:   DeleteLabelMapping,
@@ -942,6 +942,7 @@ func CreateLabelMapping(
 				},
 			},
 		},
+		// todo (al) is this obsolete?
 		// {
 		// 	name: "duplicate label mappings",
 		// 	fields: LabelFields{

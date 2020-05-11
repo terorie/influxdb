@@ -177,6 +177,8 @@ func (s *Store) UpdateLabel(ctx context.Context, tx kv.Tx, l *influxdb.Label) er
 	return nil
 }
 
+// TODO (al) get rid of mappings here...?
+// https://github.com/influxdata/influxdb/issues/11278
 func (s *Store) DeleteLabel(ctx context.Context, tx kv.Tx, id influxdb.ID) error {
 	label, err := s.GetLabel(ctx, tx, id)
 	if err != nil {
@@ -222,6 +224,80 @@ func (s *Store) DeleteLabel(ctx context.Context, tx kv.Tx, id influxdb.ID) error
 
 	return nil
 }
+
+//********* Label Mappings *********//
+
+func (s *Store) CreateLabelMapping(ctx context.Context, tx kv.Tx, m *influxdb.LabelMapping) error {
+	v, err := json.Marshal(m)
+	if err != nil {
+		return &influxdb.Error{
+			Err: err,
+		}
+	}
+
+	key, err := labelMappingKey(m)
+	if err != nil {
+		return &influxdb.Error{
+			Err: err,
+		}
+	}
+
+	idx, err := tx.Bucket(labelMappingBucket)
+	if err != nil {
+		return err
+	}
+
+	if err := idx.Put(key, v); err != nil {
+		return &influxdb.Error{
+			Err: err,
+		}
+	}
+
+	return nil
+}
+
+func (s *Store) FindResourceLabels(ctx context.Context, tx kv.Tx, filter influxdb.LabelMappingFilter, ls *[]*influxdb.Label) error {
+	if !filter.ResourceID.Valid() {
+		return &influxdb.Error{Code: influxdb.EInvalid, Msg: "filter requires a valid resource id", Err: influxdb.ErrInvalidID}
+	}
+	idx, err := tx.Bucket(labelMappingBucket)
+	if err != nil {
+		return err
+	}
+
+	prefix, err := filter.ResourceID.Encode()
+	if err != nil {
+		return err
+	}
+
+	cur, err := idx.ForwardCursor(prefix, kv.WithCursorPrefix(prefix))
+	if err != nil {
+		return err
+	}
+
+	for k, _ := cur.Next(); k != nil; k, _ = cur.Next() {
+		_, id, err := decodeLabelMappingKey(k)
+		if err != nil {
+			return err
+		}
+
+		l, err := s.GetLabel(ctx, tx, id)
+		if l == nil && err != nil {
+			// TODO(jm): return error instead of continuing once orphaned mappings are fixed
+			// (see https://github.com/influxdata/influxdb/issues/11278)
+			continue
+		}
+
+		*ls = append(*ls, l)
+	}
+	return nil
+}
+
+func (s *Store) DeleteLabelMapping(ctx context.Context, tx kv.Tx, m *influxdb.LabelMapping) error {
+	return nil
+}
+
+//********* helper functions *********//
 
 func labelMappingKey(m *influxdb.LabelMapping) ([]byte, error) {
 	lid, err := m.LabelID.Encode()
@@ -276,6 +352,22 @@ func filterLabelsFn(filter influxdb.LabelFilter) func(l *influxdb.Label) bool {
 		return (filter.Name == "" || (strings.EqualFold(filter.Name, label.Name))) &&
 			((filter.OrgID == nil) || (filter.OrgID != nil && *filter.OrgID == label.OrgID))
 	}
+}
+
+func decodeLabelMappingKey(key []byte) (resourceID influxdb.ID, labelID influxdb.ID, err error) {
+	if len(key) != 2*influxdb.IDLength {
+		return 0, 0, &influxdb.Error{Code: influxdb.EInvalid, Msg: "malformed label mapping key (please report this error)"}
+	}
+
+	if err := (&resourceID).Decode(key[:influxdb.IDLength]); err != nil {
+		return 0, 0, &influxdb.Error{Code: influxdb.EInvalid, Msg: "bad resource id", Err: influxdb.ErrInvalidID}
+	}
+
+	if err := (&labelID).Decode(key[influxdb.IDLength:]); err != nil {
+		return 0, 0, &influxdb.Error{Code: influxdb.EInvalid, Msg: "bad label id", Err: influxdb.ErrInvalidID}
+	}
+
+	return resourceID, labelID, nil
 }
 
 func forEachLabel(ctx context.Context, tx kv.Tx, fn func(*influxdb.Label) bool) error {
