@@ -18,3 +18,11 @@ var (
 		Msg:  "unable to generate valid id",
 	}
 )
+
+// ErrInternalServiceError is used when the error comes from an internal system.
+func ErrInternalServiceError(err error) *influxdb.Error {
+	return &influxdb.Error{
+		Code: influxdb.EInternal,
+		Err:  err,
+	}
+}

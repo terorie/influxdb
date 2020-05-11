@@ -30,11 +30,9 @@ func (s *Service) CreateLabel(ctx context.Context, l *influxdb.Label) error {
 	l.Name = strings.TrimSpace(l.Name)
 
 	err := s.store.Update(ctx, func(tx kv.Tx) error {
-		if err := s.uniqueLabelName(ctx, tx, l); err != nil {
+		if err := uniqueLabelName(ctx, tx, l); err != nil {
 			return err
 		}
-
-		l.ID = s.store.IDGenerator.ID()
 
 		if err := s.store.CreateLabel(ctx, tx, l); err != nil {
 			return err
@@ -43,12 +41,6 @@ func (s *Service) CreateLabel(ctx context.Context, l *influxdb.Label) error {
 		return nil
 	})
 
-	// if err != nil {
-	// 	return &influxdb.Error{
-	// 		Err: err,
-	// 	}
-	// }
-	// todo (al) make sure that the above functions all return influxdb error types
 	return err
 }
 
@@ -56,20 +48,20 @@ func (s *Service) CreateLabel(ctx context.Context, l *influxdb.Label) error {
 func (s *Service) FindLabelByID(ctx context.Context, id influxdb.ID) (*influxdb.Label, error) {
 	var l *influxdb.Label
 
-	// err := s.kv.View(ctx, func(tx kv.Tx) error {
-	// 	label, pe := s.findLabelByID(ctx, tx, id)
-	// 	if pe != nil {
-	// 		return pe
-	// 	}
-	// 	l = label
-	// 	return nil
-	// })
+	err := s.store.View(ctx, func(tx kv.Tx) error {
+		label, e := s.store.GetLabel(ctx, tx, id)
+		if e != nil {
+			return e
+		}
+		l = label
+		return nil
+	})
 
-	// if err != nil {
-	// 	return nil, &influxdb.Error{
-	// 		Err: err,
-	// 	}
-	// }
+	if err != nil {
+		return nil, &influxdb.Error{
+			Err: err,
+		}
+	}
 
 	return l, nil
 }
@@ -77,18 +69,18 @@ func (s *Service) FindLabelByID(ctx context.Context, id influxdb.ID) (*influxdb.
 // FindLabels returns a list of labels that match a filter.
 func (s *Service) FindLabels(ctx context.Context, filter influxdb.LabelFilter, opt ...influxdb.FindOptions) ([]*influxdb.Label, error) {
 	ls := []*influxdb.Label{}
-	// err := s.kv.View(ctx, func(tx kv.Tx) error {
-	// 	labels, err := s.findLabels(ctx, tx, filter)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	ls = labels
-	// 	return nil
-	// })
+	err := s.store.View(ctx, func(tx kv.Tx) error {
+		labels, err := s.store.ListLabels(ctx, tx, filter)
+		if err != nil {
+			return err
+		}
+		ls = labels
+		return nil
+	})
 
-	// if err != nil {
-	// 	return nil, err
-	// }
+	if err != nil {
+		return nil, err
+	}
 
 	return ls, nil
 }
@@ -107,18 +99,89 @@ func (s *Service) FindResourceLabels(ctx context.Context, filter influxdb.LabelM
 // UpdateLabel updates a label.
 func (s *Service) UpdateLabel(ctx context.Context, id influxdb.ID, upd influxdb.LabelUpdate) (*influxdb.Label, error) {
 	var label *influxdb.Label
-	// err := s.kv.Update(ctx, func(tx Tx) error {
-	// 	labelResponse, pe := s.updateLabel(ctx, tx, id, upd)
-	// 	if pe != nil {
-	// 		return &influxdb.Error{
-	// 			Err: pe,
-	// 		}
-	// 	}
-	// 	label = labelResponse
-	// 	return nil
-	// })
+	err := s.store.View(ctx, func(tx kv.Tx) error {
+		l, err := s.store.GetLabel(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		label = l
+		return nil
+	})
 
-	return label, nil // todo (al): should be err
+	if err != nil {
+		return nil, err // todo (al) not found error?
+	}
+
+	if len(upd.Properties) > 0 && label.Properties == nil {
+		label.Properties = make(map[string]string)
+	}
+
+	for k, v := range upd.Properties {
+		if v == "" {
+			delete(label.Properties, k)
+		} else {
+			label.Properties[k] = v
+		}
+	}
+
+	if upd.Name != "" {
+		err := s.store.Update(ctx, func(tx kv.Tx) error {
+			upd.Name = strings.TrimSpace(upd.Name)
+
+			idx, err := tx.Bucket(labelIndex)
+			if err != nil {
+				return &influxdb.Error{
+					Err: err,
+				}
+			}
+
+			key, err := labelIndexKey(label)
+			if err != nil {
+				return &influxdb.Error{
+					Err: err,
+				}
+			}
+
+			if err := idx.Delete(key); err != nil {
+				return &influxdb.Error{
+					Err: err,
+				}
+			}
+
+			label.Name = upd.Name
+			if err := uniqueLabelName(ctx, tx, label); err != nil {
+				return &influxdb.Error{
+					Err: err,
+				}
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := label.Validate(); err != nil {
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Err:  err,
+		}
+	}
+
+	////////////
+	err = s.store.Update(ctx, func(tx kv.Tx) error {
+		e := s.store.UpdateLabel(ctx, tx, label)
+		if e != nil {
+			return &influxdb.Error{
+				Err: e,
+			}
+		}
+		return nil
+	})
+
+	return label, err // todo (al): should be err
 }
 
 // DeleteLabel deletes a label.
@@ -156,4 +219,39 @@ func (s *Service) DeleteLabelMapping(ctx context.Context, m *influxdb.LabelMappi
 	// 	}
 	// }
 	return nil
+}
+
+func unique(ctx context.Context, tx kv.Tx, indexBucket, indexKey []byte) error {
+	bucket, err := tx.Bucket(indexBucket)
+	if err != nil {
+		return kv.UnexpectedIndexError(err)
+	}
+
+	_, err = bucket.Get(indexKey)
+	// if not found then this is  _unique_.
+	if kv.IsNotFound(err) {
+		return nil
+	}
+
+	// no error means this is not unique
+	if err == nil {
+		return kv.NotUniqueError
+	}
+
+	// any other error is some sort of internal server error
+	return kv.UnexpectedIndexError(err)
+}
+
+func uniqueLabelName(ctx context.Context, tx kv.Tx, lbl *influxdb.Label) error {
+	key, err := labelIndexKey(lbl)
+	if err != nil {
+		return err
+	}
+
+	// labels are unique by `organization:label_name`
+	err = unique(ctx, tx, labelIndex, key)
+	if err == kv.NotUniqueError {
+		return labelAlreadyExistsError(lbl)
+	}
+	return err
 }
