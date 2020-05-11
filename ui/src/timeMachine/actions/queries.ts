@@ -38,6 +38,7 @@ import {
 // Selectors
 import {getOrg} from 'src/organizations/selectors'
 import {getAll} from 'src/resources/selectors/index'
+import {fireQueryEvent} from 'src/shared/utils/analytics'
 
 export type Action = SaveDraftQueriesAction | SetQueryResults
 
@@ -133,6 +134,9 @@ export const executeQueries = () => async (dispatch, getState: GetState) => {
 
     pendingResults = queries.map(({text}) => {
       const orgID = getOrgIDFromBuckets(text, allBuckets) || getOrg(state).id
+
+      fireQueryEvent(getOrg(state).id, orgID)
+
       const extern = buildVarsOption(variableAssignments)
 
       return runQuery(orgID, text, extern)
