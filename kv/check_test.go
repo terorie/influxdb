@@ -15,14 +15,14 @@ func TestBoltCheckService(t *testing.T) {
 	influxdbtesting.CheckService(initBoltCheckService, t)
 }
 
-func initBoltCheckService(f influxdbtesting.CheckFields, t *testing.T) (influxdb.CheckService, string, func()) {
+func initBoltCheckService(f influxdbtesting.CheckFields, t *testing.T) (influxdb.CheckService, *kv.Service, string, func()) {
 	s, closeBolt, err := NewTestBoltStore(t)
 	if err != nil {
 		t.Fatalf("failed to create new kv store: %v", err)
 	}
 
 	svc, op, closeSvc := initCheckService(s, f, t)
-	return svc, op, func() {
+	return svc, svc, op, func() {
 		closeSvc()
 		closeBolt()
 	}
